@@ -1,0 +1,100 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Daniel Oliveira de Brito"
+date: "15/12/2019"
+output: html_document
+---
+
+# Executive summary
+This report addresses a machine model building to Human Activity Recognition, predicting the type of exercise using data from different accelerometer.
+
+* We fitted a gradient boosting model using 52 variables to predict `classe`
+
+* The gbm model has a train accuracy of 99,32%, correctly identifying 20 out of 20 unknown test cases.
+
+# Load data and cleaning the data
+```{r pack, message=FALSE, results="hide"}
+library(tidyverse)
+library(caret)
+library(doParallel)
+```
+
+We set a parallel processing according to [this Kaggle post](https://www.kaggle.com/c/liberty-mutual-group-property-inspection-prediction/discussion/15803]) and [Leonard Greski's post](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md).
+
+```{r paralell}
+cores <- 8
+cl <- makeCluster(cores)
+registerDoParallel(cores)
+```
+
+Load the data and set the seed for reproducibility. 
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.
+
+```{r load}
+# reproducibility
+set.seed(123)
+
+# read data
+training <- read.csv("C:/Users/Daniel/Documents/Coursera/8. machine learning/project/data/pml-training.csv")
+testing <- read.csv("C:/Users/Daniel/Documents/Coursera/8. machine learning/project/data/pml-testing.csv")
+```
+
+The training data contains `r nrow(training)` observations on `r ncol(training)` variables. The `classe` variable is distributed in five factors (A, B, C, D, E). The testing data contains `r nrow(testing)` observations.
+
+```{r}
+prop.table(table(training$classe))
+```
+
+The first seven columns contain variables that wont help the predictions.
+```{r c17}
+head(training[, 1:7])
+```
+
+As pointed by [Tom Ritch](https://www.coursera.org/learn/practical-machine-learning/peer/R43St/prediction-assignment-writeup/discussions/threads/BEoN3d3AEeantg6jhJXDuA/replies/LAxh8uDaEealIQ455Qm1fA), the data set includes summary statistics calculated at a measurement boundary.
+
+```{r cleaning}
+mytraining <- training[,-c(1, 2, 3, 4, 5, 6, 7)]
+mytraining <- mytraining[, -grep("*kurtosis|*skewness|*max|*min|*amplitude|*var|*avg|*stddev", names(mytraining))]
+```
+
+So, we removed those variables from our training set, reducing the dataset to `r ncol(mytraining)` variables.
+
+# Cross validation
+We use the `trainControl` function to control the model creation, setting the variables bellow:   
+
+* `repeatedcv`: resampling method   
+
+* `number = 5` and `repeats = 3`: three separate 10-fold cross-validations   
+
+```{r cv}
+trctrl <- trainControl(method = "repeatedcv", number = 5, repeats = 3, allowParallel = TRUE)
+```
+
+# Model built
+Following [Anuj Parashar suggestion](https://www.coursera.org/learn/practical-machine-learning/peer/R43St/prediction-assignment-writeup/discussions/threads/0ps7kDNmEemsAgoPgesPTg), we selected one model and tried to tune it.
+We selected the Gradient Boosting Model, and tuned it inspired by [UC Business Analytics R Programming Guide](http://uc-r.github.io/gbm_regression). We used 150 trees with a depth of 10, a learning rate of 0.1 ("smaller values reduce the chance of overfitting but also increases the time to find the optimal fit") and a minimum number of observations allowed in the trees terminal nodes of 10.
+
+```{r gbm, cache = TRUE, results = "hide"}
+myGrid <- expand.grid(n.trees = 150, interaction.depth = 10, shrinkage = 0.1, n.minobsinnode = 10)
+gbm_tune <- train(classe ~ ., data = mytraining, trControl = trctrl, method = "gbm", tuneGrid = myGrid)
+```
+
+# Train and test accuracy
+Considering [Leonard Greski's post](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-requiredModelAccuracy.md) using  Šidák's correction of multiple tests, the required model accuracy to predict the 20 tests with 95% confidence is `r (1 - 0.05)^(1/20)`. The train accuracy is 0.9932. So, considering each observation in the test data set is independent of the others, we have an test accuracy of `r 0.9932^20`.
+
+```{r insample error}
+confusionMatrix(gbm_tune)
+```
+
+# Prediction
+Hiding results, as suggested by Anuj Parashar.
+```{r prediction, results = 'hide'}
+predict(gbm_tune, testing)
+```
+
+As result of the Quiz test, the model predict all the 20 cases.
+
+```{r stop parallel}
+# stop the parallel processing
+stopCluster(cl)
+```
